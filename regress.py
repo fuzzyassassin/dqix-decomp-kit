@@ -3104,6 +3104,33 @@ def _landpr_report():
     return None
 
 
+@check("landpr aligns config with the functions it landed, like both integrators",
+       "PRs #108 and #109 landed ov031 Thumb functions through landpr.py, which never ran countfix, so "
+       "eight symbol sizes kept their padding and every fresh checkout failed selfcheck's countfix check")
+def _landpr_countfix():
+    import ast
+    tree = ast.parse(open(f"{KIT}/landpr.py", encoding="utf-8").read())
+    fns = {n.name: n for n in tree.body if isinstance(n, ast.FunctionDef)}
+    calls = sorted((c.lineno, c.col_offset, ast.unparse(c.func)) for c in ast.walk(fns["main"])
+                   if isinstance(c, ast.Call))
+    main_calls = [name for _, _, name in calls]
+    if "align_config" not in fns or "align_config" not in main_calls:
+        return "landpr.main() does not align config with countfix.py"
+    if main_calls.index("align_config") < main_calls.index("build_every_region"):
+        return "landpr aligns config before every region is green"
+    if main_calls.index("align_config") > max(i for i, c in enumerate(main_calls) if c == "fetch"):
+        return "landpr aligns config after its last check that the pull request heads did not move"
+    src = ast.unparse(fns["align_config"])
+    for need, why in (("objdiff.json", "does not build objdiff.json before countfix"),
+                      ("--since=", "does not limit countfix to what it landed"),
+                      ("--restore", "does not restore the config when the aligned build is red"),
+                      ("WARN countfix failed", "does not report an unexpected countfix exit"),
+                      ("Align config with landed functions", "does not commit the aligned config")):
+        if need not in src:
+            return f"landpr.align_config {why}"
+    return None
+
+
 @check("the cached kit-behind count is dropped when the checkout's HEAD moves",
        "behind() cached `5` for 10 minutes after a manual pull, so every dispatcher restart saw KIT "
        "UPDATE WAITING, ran kit_update (up to date) and restarted again, in a loop")

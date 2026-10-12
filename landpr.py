@@ -5,8 +5,9 @@
 In the integration tree, from the published tip: merges each pull request head as `Merge #N` (a
 conflict only in delinks.txt, where both sides added blocks, keeps both), refuses symbolic links, strips
 comments from the source it changed, requires `prready.py decomp` READY, ports between the regions
-(regionsync.py), requires `ninja check` and `ninja sha1` in every region, refuses a head that moved
-since it was fetched, then publishes. regionsync prints `NOT IN USA <file>: <why>` for each file another
+(regionsync.py), requires `ninja check` and `ninja sha1` in every region, aligns config with the landed
+functions (countfix.py, kept only while usa stays green), refuses a head that moved since it was
+fetched, then publishes. regionsync prints `NOT IN USA <file>: <why>` for each file another
 region delinks that it could not wire into config/usa.
 Exit 0: landed. 1: refused, nothing published. 2: usage.
 """
@@ -102,6 +103,24 @@ def build_every_region(tree):
     regionsync.configure("usa")
 
 
+def align_config(tree, tip):
+    env = dict(os.environ, DQIX_REPO=tree)
+    run(tree, "ninja", "objdiff.json")
+    code, out = run(KIT, sys.executable, f"{KIT}/countfix.py", f"--since={tip}", env=env)
+    if out.strip():
+        print(out.strip())
+    if code not in (0, 3):
+        print(f"WARN countfix failed (exit {code}): landed function counts were not corrected")
+    if code != 3:
+        return
+    if regionsync.green()[0]:
+        git(tree, "add", "--", "config")
+        git(tree, "commit", "-q", "-m", "Align config with landed functions")
+    else:
+        run(KIT, sys.executable, f"{KIT}/countfix.py", "--restore", env=env)
+        run(tree, "ninja", "check")
+
+
 def main():
     numbers = sys.argv[1:]
     if not numbers or not all(n.isdigit() for n in numbers):
@@ -130,6 +149,7 @@ def main():
         refuse(f"prready.py decomp on the merged tree:\n{out.strip()}")
     print(run(tree, sys.executable, f"{KIT}/regionsync.py", tree)[1].strip())
     build_every_region(tree)
+    align_config(tree, tip)
     for n, head in heads.items():
         if fetch(tree, f"pull/{n}/head") != head:
             refuse(f"#{n} moved after it was fetched; run landpr.sh again")
